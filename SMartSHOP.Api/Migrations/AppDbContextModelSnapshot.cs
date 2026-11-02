@@ -37,6 +37,18 @@ namespace SMartSHOP.Api.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Categories");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            Name = "Laptopy"
+                        },
+                        new
+                        {
+                            Id = 2,
+                            Name = "Smartfony"
+                        });
                 });
 
             modelBuilder.Entity("SMartSHOP.Api.Models.Order", b =>
@@ -123,6 +135,32 @@ namespace SMartSHOP.Api.Migrations
                     b.HasIndex("CategoryId");
 
                     b.ToTable("Products");
+
+                    b.HasData(
+                        new
+                        {
+                            Id = 1,
+                            CategoryId = 1,
+                            Description = "M3 Chip, 16GB RAM",
+                            Name = "MacBook Pro",
+                            Price = 9999.99m
+                        },
+                        new
+                        {
+                            Id = 2,
+                            CategoryId = 2,
+                            Description = "128GB Black",
+                            Name = "iPhone 15",
+                            Price = 4299.00m
+                        },
+                        new
+                        {
+                            Id = 3,
+                            CategoryId = 1,
+                            Description = "Intel i7, 32GB RAM",
+                            Name = "Dell XPS 15",
+                            Price = 8500.00m
+                        });
                 });
 
             modelBuilder.Entity("SMartSHOP.Api.Models.User", b =>
