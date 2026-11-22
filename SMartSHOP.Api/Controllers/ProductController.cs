@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using SMartSHOP.Api.Data;
@@ -59,6 +60,7 @@ public class ProductsController : ControllerBase
         return Ok(dto);
     }
 
+    [Authorize(Roles = "Admin")]
     [HttpPost]
     public async Task<ActionResult<ProductDto>> CreateProduct(CreateProductDto dto)
     {
@@ -91,6 +93,42 @@ public class ProductsController : ControllerBase
         return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, resultDto);
     }
 
+    [Authorize(Roles = "Admin")]
+    [HttpPut("{id}")]
+    public async Task<ActionResult<ProductDto>> UpdateProduct(int id, CreateProductDto dto)
+    {
+        var product = await _context.Products.FindAsync(id);
+        if (product == null)
+        {
+            return NotFound(new { message = $"Produkt o ID {id} nie istnieje." });
+        }
+
+        var category = await _context.Categories.FindAsync(dto.CategoryId);
+        if (category == null)
+        {
+            return BadRequest(new { message = $"Kategoria o ID {dto.CategoryId} nie istnieje." });
+        }
+
+        product.Name = dto.Name;
+        product.Description = dto.Description;
+        product.Price = dto.Price;
+        product.CategoryId = dto.CategoryId;
+
+        await _context.SaveChangesAsync();
+
+        var resultDto = new ProductDto
+        {
+            Id = product.Id,
+            Name = product.Name,
+            Description = product.Description,
+            Price = product.Price,
+            CategoryName = category.Name
+        };
+
+        return Ok(resultDto);
+    }
+
+    [Authorize(Roles = "Admin")]
     [HttpDelete("{id}")]
     public async Task<IActionResult> DeleteProduct(int id)
     {
