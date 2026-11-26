@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,7 @@ public class OrdersController : ControllerBase
     public async Task<ActionResult<IEnumerable<OrderResponseDto>>> GetOrders()
     {
         var orders = await _context.Orders
+            .Include(o => o.User)
             .Include(o => o.OrderItems)
                 .ThenInclude(oi => oi.Product)
             .OrderByDescending(o => o.CreatedAt)
@@ -33,6 +35,45 @@ public class OrdersController : ControllerBase
                 CreatedAt = o.CreatedAt,
                 TotalAmount = o.TotalAmount,
                 UserId = o.UserId,
+                CustomerEmail = o.User != null ? o.User.Email : $"Użytkownik #{o.UserId}",
+                Items = o.OrderItems.Select(oi => new OrderItemResponseDto
+                {
+                    ProductId = oi.ProductId,
+                    ProductName = oi.Product != null ? oi.Product.Name : $"Produkt #{oi.ProductId}",
+                    UnitPrice = oi.UnitPrice,
+                    Quantity = oi.Quantity,
+                    LineTotal = oi.UnitPrice * oi.Quantity
+                }).ToList()
+            })
+            .ToListAsync();
+
+        return Ok(orders);
+    }
+
+    [Authorize]
+    [HttpGet("my")]
+    public async Task<ActionResult<IEnumerable<OrderResponseDto>>> GetMyOrders()
+    {
+        var user = await ResolveCurrentUserAsync();
+        if (user == null)
+        {
+            return Unauthorized(new { message = "Zaloguj się, aby zobaczyć swoje zamówienia." });
+        }
+
+        var orders = await _context.Orders
+            .Include(o => o.User)
+            .Include(o => o.OrderItems)
+                .ThenInclude(oi => oi.Product)
+            .Where(o => o.UserId == user.Id)
+            .OrderByDescending(o => o.CreatedAt)
+            .Select(o => new OrderResponseDto
+            {
+                Id = o.Id,
+                Status = o.Status,
+                CreatedAt = o.CreatedAt,
+                TotalAmount = o.TotalAmount,
+                UserId = o.UserId,
+                CustomerEmail = o.User != null ? o.User.Email : user.Email,
                 Items = o.OrderItems.Select(oi => new OrderItemResponseDto
                 {
                     ProductId = oi.ProductId,
@@ -48,10 +89,11 @@ public class OrdersController : ControllerBase
     }
 
     [Authorize(Roles = "Admin")]
-    [HttpGet("{id}")]
+    [HttpGet("{id:int}")]
     public async Task<ActionResult<OrderResponseDto>> GetOrder(int id)
     {
         var order = await _context.Orders
+            .Include(o => o.User)
             .Include(o => o.OrderItems)
                 .ThenInclude(oi => oi.Product)
             .Where(o => o.Id == id)
@@ -62,6 +104,7 @@ public class OrdersController : ControllerBase
                 CreatedAt = o.CreatedAt,
                 TotalAmount = o.TotalAmount,
                 UserId = o.UserId,
+                CustomerEmail = o.User != null ? o.User.Email : $"Użytkownik #{o.UserId}",
                 Items = o.OrderItems.Select(oi => new OrderItemResponseDto
                 {
                     ProductId = oi.ProductId,
@@ -81,6 +124,7 @@ public class OrdersController : ControllerBase
         return Ok(order);
     }
 
+    [Authorize]
     [HttpPost]
     public async Task<ActionResult<OrderResponseDto>> CreateOrder([FromBody] CreateOrderDto dto)
     {
@@ -89,19 +133,10 @@ public class OrdersController : ControllerBase
             return BadRequest(new { message = "Zamówienie musi zawierać co najmniej jeden produkt." });
         }
 
-        User? user = null;
-        if (!string.IsNullOrWhiteSpace(dto.CustomerEmail))
-        {
-            var normalizedEmail = dto.CustomerEmail.Trim().ToLower();
-            user = await _context.Users
-                .FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
-        }
-
-        user ??= await _context.Users.OrderBy(u => u.Id).FirstOrDefaultAsync();
-
+        var user = await ResolveCurrentUserAsync(dto.CustomerEmail);
         if (user == null)
         {
-            return BadRequest(new { message = "Brak użytkownika w bazie do przypisania zamówienia." });
+            return Unauthorized(new { message = "Zaloguj się na konto użytkownika, aby złożyć zamówienie." });
         }
 
         var groupedQuantities = dto.Items
@@ -161,6 +196,7 @@ public class OrdersController : ControllerBase
                 CreatedAt = order.CreatedAt,
                 TotalAmount = order.TotalAmount,
                 UserId = order.UserId,
+                CustomerEmail = user.Email,
                 Items = order.OrderItems.Select(oi => new OrderItemResponseDto
                 {
                     ProductId = oi.ProductId,
@@ -178,5 +214,27 @@ public class OrdersController : ControllerBase
             await transaction.RollbackAsync();
             throw;
         }
+    }
+
+    private async Task<User?> ResolveCurrentUserAsync(string? fallbackEmail = null)
+    {
+        var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (int.TryParse(userIdClaim, out var parsedUserId) && parsedUserId > 0)
+        {
+            var byId = await _context.Users.FirstOrDefaultAsync(u => u.Id == parsedUserId);
+            if (byId != null)
+            {
+                return byId;
+            }
+        }
+
+        var emailClaim = User.FindFirstValue(ClaimTypes.Email) ?? fallbackEmail;
+        if (!string.IsNullOrWhiteSpace(emailClaim))
+        {
+            var normalizedEmail = emailClaim.Trim().ToLowerInvariant();
+            return await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
+        }
+
+        return null;
     }
 }
