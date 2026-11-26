@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,7 @@ public class OrdersController : ControllerBase
     public async Task<ActionResult<IEnumerable<OrderResponseDto>>> GetOrders()
     {
         var orders = await _context.Orders
+            .Include(o => o.User)
             .Include(o => o.OrderItems)
                 .ThenInclude(oi => oi.Product)
             .OrderByDescending(o => o.CreatedAt)
@@ -33,6 +35,7 @@ public class OrdersController : ControllerBase
                 CreatedAt = o.CreatedAt,
                 TotalAmount = o.TotalAmount,
                 UserId = o.UserId,
+                CustomerEmail = o.User != null ? o.User.Email : $"Użytkownik #{o.UserId}",
                 Items = o.OrderItems.Select(oi => new OrderItemResponseDto
                 {
                     ProductId = oi.ProductId,
@@ -52,6 +55,7 @@ public class OrdersController : ControllerBase
     public async Task<ActionResult<OrderResponseDto>> GetOrder(int id)
     {
         var order = await _context.Orders
+            .Include(o => o.User)
             .Include(o => o.OrderItems)
                 .ThenInclude(oi => oi.Product)
             .Where(o => o.Id == id)
@@ -62,6 +66,7 @@ public class OrdersController : ControllerBase
                 CreatedAt = o.CreatedAt,
                 TotalAmount = o.TotalAmount,
                 UserId = o.UserId,
+                CustomerEmail = o.User != null ? o.User.Email : $"Użytkownik #{o.UserId}",
                 Items = o.OrderItems.Select(oi => new OrderItemResponseDto
                 {
                     ProductId = oi.ProductId,
@@ -81,6 +86,7 @@ public class OrdersController : ControllerBase
         return Ok(order);
     }
 
+    [Authorize]
     [HttpPost]
     public async Task<ActionResult<OrderResponseDto>> CreateOrder([FromBody] CreateOrderDto dto)
     {
@@ -90,18 +96,25 @@ public class OrdersController : ControllerBase
         }
 
         User? user = null;
-        if (!string.IsNullOrWhiteSpace(dto.CustomerEmail))
+        var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (int.TryParse(userIdClaim, out var parsedUserId) && parsedUserId > 0)
         {
-            var normalizedEmail = dto.CustomerEmail.Trim().ToLower();
-            user = await _context.Users
-                .FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
+            user = await _context.Users.FirstOrDefaultAsync(u => u.Id == parsedUserId);
         }
-
-        user ??= await _context.Users.OrderBy(u => u.Id).FirstOrDefaultAsync();
 
         if (user == null)
         {
-            return BadRequest(new { message = "Brak użytkownika w bazie do przypisania zamówienia." });
+            var emailClaim = User.FindFirstValue(ClaimTypes.Email) ?? dto.CustomerEmail;
+            if (!string.IsNullOrWhiteSpace(emailClaim))
+            {
+                var normalizedEmail = emailClaim.Trim().ToLowerInvariant();
+                user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
+            }
+        }
+
+        if (user == null)
+        {
+            return Unauthorized(new { message = "Zaloguj się na konto użytkownika, aby złożyć zamówienie." });
         }
 
         var groupedQuantities = dto.Items
@@ -161,6 +174,7 @@ public class OrdersController : ControllerBase
                 CreatedAt = order.CreatedAt,
                 TotalAmount = order.TotalAmount,
                 UserId = order.UserId,
+                CustomerEmail = user.Email,
                 Items = order.OrderItems.Select(oi => new OrderItemResponseDto
                 {
                     ProductId = oi.ProductId,

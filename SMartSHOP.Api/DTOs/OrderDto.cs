@@ -37,5 +37,6 @@ public class OrderResponseDto
     public DateTime CreatedAt { get; set; }
     public decimal TotalAmount { get; set; }
     public int UserId { get; set; }
+    public string CustomerEmail { get; set; } = string.Empty;
     public List<OrderItemResponseDto> Items { get; set; } = new();
 }
