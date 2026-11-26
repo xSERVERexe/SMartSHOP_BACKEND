@@ -50,8 +50,46 @@ public class OrdersController : ControllerBase
         return Ok(orders);
     }
 
+    [Authorize]
+    [HttpGet("my")]
+    public async Task<ActionResult<IEnumerable<OrderResponseDto>>> GetMyOrders()
+    {
+        var user = await ResolveCurrentUserAsync();
+        if (user == null)
+        {
+            return Unauthorized(new { message = "Zaloguj się, aby zobaczyć swoje zamówienia." });
+        }
+
+        var orders = await _context.Orders
+            .Include(o => o.User)
+            .Include(o => o.OrderItems)
+                .ThenInclude(oi => oi.Product)
+            .Where(o => o.UserId == user.Id)
+            .OrderByDescending(o => o.CreatedAt)
+            .Select(o => new OrderResponseDto
+            {
+                Id = o.Id,
+                Status = o.Status,
+                CreatedAt = o.CreatedAt,
+                TotalAmount = o.TotalAmount,
+                UserId = o.UserId,
+                CustomerEmail = o.User != null ? o.User.Email : user.Email,
+                Items = o.OrderItems.Select(oi => new OrderItemResponseDto
+                {
+                    ProductId = oi.ProductId,
+                    ProductName = oi.Product != null ? oi.Product.Name : $"Produkt #{oi.ProductId}",
+                    UnitPrice = oi.UnitPrice,
+                    Quantity = oi.Quantity,
+                    LineTotal = oi.UnitPrice * oi.Quantity
+                }).ToList()
+            })
+            .ToListAsync();
+
+        return Ok(orders);
+    }
+
     [Authorize(Roles = "Admin")]
-    [HttpGet("{id}")]
+    [HttpGet("{id:int}")]
     public async Task<ActionResult<OrderResponseDto>> GetOrder(int id)
     {
         var order = await _context.Orders
@@ -95,23 +133,7 @@ public class OrdersController : ControllerBase
             return BadRequest(new { message = "Zamówienie musi zawierać co najmniej jeden produkt." });
         }
 
-        User? user = null;
-        var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (int.TryParse(userIdClaim, out var parsedUserId) && parsedUserId > 0)
-        {
-            user = await _context.Users.FirstOrDefaultAsync(u => u.Id == parsedUserId);
-        }
-
-        if (user == null)
-        {
-            var emailClaim = User.FindFirstValue(ClaimTypes.Email) ?? dto.CustomerEmail;
-            if (!string.IsNullOrWhiteSpace(emailClaim))
-            {
-                var normalizedEmail = emailClaim.Trim().ToLowerInvariant();
-                user = await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
-            }
-        }
-
+        var user = await ResolveCurrentUserAsync(dto.CustomerEmail);
         if (user == null)
         {
             return Unauthorized(new { message = "Zaloguj się na konto użytkownika, aby złożyć zamówienie." });
@@ -192,5 +214,27 @@ public class OrdersController : ControllerBase
             await transaction.RollbackAsync();
             throw;
         }
+    }
+
+    private async Task<User?> ResolveCurrentUserAsync(string? fallbackEmail = null)
+    {
+        var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (int.TryParse(userIdClaim, out var parsedUserId) && parsedUserId > 0)
+        {
+            var byId = await _context.Users.FirstOrDefaultAsync(u => u.Id == parsedUserId);
+            if (byId != null)
+            {
+                return byId;
+            }
+        }
+
+        var emailClaim = User.FindFirstValue(ClaimTypes.Email) ?? fallbackEmail;
+        if (!string.IsNullOrWhiteSpace(emailClaim))
+        {
+            var normalizedEmail = emailClaim.Trim().ToLowerInvariant();
+            return await _context.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == normalizedEmail);
+        }
+
+        return null;
     }
 }
